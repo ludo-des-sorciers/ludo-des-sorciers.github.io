@@ -122,6 +122,8 @@ body{
 .pawn.hop{animation:hop .15s ease}
 @keyframes hop{50%{transform:translate(-50%,-80%) scale(1.15)}}
 .pawn.new{animation:spawn .6s ease}
+.pawn.kidnap{transition:left .9s cubic-bezier(.5,-0.4,.4,1.4),top .9s cubic-bezier(.5,-0.4,.4,1.4);animation:snatch .9s ease;z-index:6;box-shadow:0 0 14px #ff2b2b}
+@keyframes snatch{0%{transform:translate(-50%,-50%) scale(1)}20%{transform:translate(-50%,-50%) scale(1.5) rotate(-20deg)}60%{transform:translate(-50%,-50%) scale(.7) rotate(300deg)}100%{transform:translate(-50%,-50%) scale(1) rotate(360deg)}}
 @keyframes spawn{0%{transform:translate(-50%,-50%) scale(0)}70%{transform:translate(-50%,-50%) scale(1.5)}100%{transform:translate(-50%,-50%) scale(1)}}
 
 /* Dé 3D au centre */
@@ -459,6 +461,29 @@ const sfx = {
   miss(){ tone(330,.12,'triangle',.1); tone(262,.18,'triangle',.1,.1); },
   sorc(){ tone(130,.35,'sawtooth',.06); tone(98,.45,'sawtooth',.05,.15); },
   lock(){ tone(1400,.05,'square',.08); tone(900,.08,'square',.07,.05); tone(500,.2,'triangle',.1,.12); },
+  cackle(){ if(muted) return; const a=ac(); if(!a) return; const t0=a.currentTime+.02;
+    const voice = (f, st, dur, v) => { const o=a.createOscillator(); o.type='sawtooth';
+      o.frequency.setValueAtTime(f*1.25, st); o.frequency.exponentialRampToValueAtTime(f, st+dur*.6);
+      const lfo=a.createOscillator(), lg=a.createGain(); lfo.frequency.value=28; lg.gain.value=f*.06; lfo.connect(lg).connect(o.frequency);
+      const f1=a.createBiquadFilter(); f1.type='bandpass'; f1.frequency.value=1700; f1.Q.value=2.5;
+      const f2=a.createBiquadFilter(); f2.type='bandpass'; f2.frequency.value=2900; f2.Q.value=4;
+      const g=a.createGain(); g.gain.setValueAtTime(.0001,st); g.gain.exponentialRampToValueAtTime(v,st+.012); g.gain.exponentialRampToValueAtTime(.0001,st+dur);
+      o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g); g.connect(a.destination);
+      o.start(st); lfo.start(st); o.stop(st+dur+.02); lfo.stop(st+dur+.02); };
+    // deux vieilles sorcières : « hé-hé-hé-hé… hiiiii »
+    for(let i=0;i<9;i++){ const st=t0+i*.105; voice(950-i*28+Math.random()*40, st, .085, .22); if(i%2===0) voice(760-i*20, st+.05, .08, .14); }
+    voice(1150, t0+1.0, .55, .2); voice(880, t0+1.05, .5, .12);
+  },
+  scream(){ if(muted) return; const a=ac(); if(!a) return; const t=a.currentTime+.01;
+    const o=a.createOscillator(); o.type='sawtooth';
+    o.frequency.setValueAtTime(430,t); o.frequency.exponentialRampToValueAtTime(920,t+.12); o.frequency.exponentialRampToValueAtTime(640,t+.6);
+    const lfo=a.createOscillator(), lg=a.createGain(); lfo.frequency.value=9; lg.gain.value=28; lfo.connect(lg).connect(o.frequency);
+    const f1=a.createBiquadFilter(); f1.type='bandpass'; f1.frequency.value=1000; f1.Q.value=3;
+    const f2=a.createBiquadFilter(); f2.type='bandpass'; f2.frequency.value=2500; f2.Q.value=5;
+    const g=a.createGain(); g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(.32,t+.04); g.gain.setValueAtTime(.3,t+.35); g.gain.exponentialRampToValueAtTime(.0001,t+.65);
+    o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g); g.connect(a.destination);
+    o.start(t); lfo.start(t); o.stop(t+.7); lfo.stop(t+.7);
+  },
   relock(){ tone(220,.1,'square',.08); tone(110,.25,'square',.08,.08); },
   win(){ [[523,0],[659,.12],[784,.24],[1047,.36],[784,.52],[1047,.64],[1319,.8]].forEach(([f,w])=>tone(f,.28,'triangle',.18,w)); }
 };
@@ -709,6 +734,22 @@ async function moveSavior(v){
   await advance(movers[0], v);
   return onSorcier(movers[0]);
 }
+async function kidnap(sorc){
+  const c = cellOf('sc', sorc); if(c===null) return false;
+  const victims = S.sv.filter(q => q.k>0 && q.k<=50 && cellOf('sv', q) === c);   // case de départ (k=0) protégée
+  if(!victims.length) return false;
+  sfx.scream(); buzz([80,40,200]);
+  victims.forEach(v => { v.el.classList.add('kidnap'); });
+  await sleep(350);
+  sfx.cackle();
+  victims.forEach(v => { v.k = -1; });
+  render();
+  say("Nooon ! Les sorciers ont kidnappé un de nos pions ! Il retourne à la maison…", "😱😱");
+  await sleep(1300);
+  victims.forEach(v => v.el.classList.remove('kidnap'));
+  await sleep(900);
+  return true;
+}
 async function sorcierClash(){
   sfx.sorc(); buzz([30,30,30]);
   say("Eh, on peut pas bouffer sorcier hein ! 😅", "😬");
@@ -746,7 +787,8 @@ async function onDice(){
     } else {
       sfx.miss(); const [txt, sg] = MISS[Math.floor(Math.random()*MISS.length)]; say(txt.replace('{v}', v), sg);
     }
-    if(await moveSavior(v)) await sorcierClash();
+    if(!S.sv.some(p => p.k>=0 && p.k+v<=56)){ await sleep(400); say("Aucun pion dehors… il te faut un 6 pour en sortir un !", "6 !!"); }
+    else if(await moveSavior(v)) await sorcierClash();
     if(S.rolls>0){ await sleep(500); say("Ton lancer bonus t'attend. Vas-y !", "ENCORE !"); }
   }
   hud();
@@ -778,9 +820,12 @@ async function sorcTurn(){
   await rollAnim(v, 'sc');
   const CAP = 54;
   const lead = S.sc.reduce((a,b)=> b.k>a.k ? b : a);
-  let pick = (Math.random()<.6 && lead.k+v<=CAP) ? lead : null;
+  const hunters = S.sc.filter(p => p.k+v<=50 && S.sv.some(q => q.k>0 && q.k<=50 && cellOf('sv', q) === (TEAMS.sc.start + p.k + v) % 52));
+  let pick = (hunters.length && Math.random()<.5) ? hunters[0] : null;
+  if(!pick) pick = (Math.random()<.6 && lead.k+v<=CAP) ? lead : null;
   if(!pick){ const others = S.sc.filter(p => p!==lead && p.k+v<=CAP); pick = others.length ? others[Math.floor(Math.random()*others.length)] : null; }
   if(pick) await advance(pick, v);
+  if(pick && await kidnap(pick)){ $('#hint').textContent = ''; await sleep(600); dice.classList.remove('sc'); return; }
   const left = sorcLeft(); Music.set('tension', left<=6 ? 2 : 1);
   say("Les sorciers avancent de "+v+"… Leur pion de tête n'est plus qu'à "+left+" case"+(left>1?'s':'')+" de chez eux !", left<=6 ? 'VITE !!!' : '😨');
   $('#hint').textContent = '';
