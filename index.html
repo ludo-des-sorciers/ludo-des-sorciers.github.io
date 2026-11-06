@@ -701,9 +701,18 @@ function hud(){
 async function advance(p, n){
   for(let i=0;i<n;i++){ p.k++; render(); p.el.classList.remove('hop'); void p.el.offsetWidth; p.el.classList.add('hop'); sfx.step(); await sleep(170); }
 }
+const cellOf = (team, p) => (p.k>=0 && p.k<=50) ? (TEAMS[team].start + p.k) % 52 : null;
+const onSorcier = p => { const c = cellOf('sv', p); return c!==null && S.sc.some(q => cellOf('sc', q) === c); };
 async function moveSavior(v){
   const movers = S.sv.filter(p => p.k>=0 && p.k+v<=56).sort((a,b)=>b.k-a.k);
-  if(movers.length) await advance(movers[0], v);
+  if(!movers.length) return false;
+  await advance(movers[0], v);
+  return onSorcier(movers[0]);
+}
+async function sorcierClash(){
+  sfx.sorc(); buzz([30,30,30]);
+  say("Eh, on peut pas bouffer sorcier hein ! 😅", "😬");
+  await sleep(1600);
 }
 
 /* ============ Déroulé ============ */
@@ -727,8 +736,8 @@ async function onDice(){
     await breakLock(S.streak); hud();
     if(S.streak>=2) return win();
     const inBase = S.sv.find(p => p.k<0);
-    if(inBase){ inBase.k = 0; render(); inBase.el.classList.remove('new'); void inBase.el.offsetWidth; inBase.el.classList.add('new'); }
-    else await moveSavior(6);
+    if(inBase){ inBase.k = 0; render(); inBase.el.classList.remove('new'); void inBase.el.offsetWidth; inBase.el.classList.add('new'); if(onSorcier(inBase)){ await sleep(500); await sorcierClash(); } }
+    else if(await moveSavior(6)) await sorcierClash();
     Music.set('hype'); say(...FIRST_SIX);
     S.rolls++; toast('🎲 Un 6 = tu rejoues !');
   } else {
@@ -737,7 +746,7 @@ async function onDice(){
     } else {
       sfx.miss(); const [txt, sg] = MISS[Math.floor(Math.random()*MISS.length)]; say(txt.replace('{v}', v), sg);
     }
-    await moveSavior(v);
+    if(await moveSavior(v)) await sorcierClash();
     if(S.rolls>0){ await sleep(500); say("Ton lancer bonus t'attend. Vas-y !", "ENCORE !"); }
   }
   hud();
